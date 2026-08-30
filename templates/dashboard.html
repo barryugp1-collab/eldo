@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Brainrot — Angel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --dust:   #1a1410;
+    --earth:  #241c14;
+    --bark:   #2e2218;
+    --grain:  #3d2e1e;
+    --feather:#b89a72;
+    --gold:   #c9a84c;
+    --ash:    #8c7b68;
+    --parch:  #e8d9c0;
+    --cream:  #f2e8d5;
+    --glow:   rgba(201,168,76,0.12);
+  }
+
+  html, body {
+    height: 100%;
+    background-color: var(--dust);
+    color: var(--parch);
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-weight: 300;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    min-height: 100vh;
+    background-image:
+      radial-gradient(ellipse 80% 60% at 50% 0%, rgba(201,168,76,0.07) 0%, transparent 70%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    background-attachment: fixed;
+  }
+
+  .grain-overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='turbulence' baseFrequency='0.9' numOctaves='4'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23g)'/%3E%3C/svg%3E");
+    background-size: 200px 200px;
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 48px 20px 80px;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 52px;
+  }
+
+  .wings {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .wing-svg {
+    width: 52px;
+    height: 36px;
+    opacity: 0.55;
+  }
+
+  .wing-svg.right {
+    transform: scaleX(-1);
+  }
+
+  .title {
+    font-size: clamp(2rem, 8vw, 3rem);
+    font-weight: 300;
+    letter-spacing: 0.18em;
+    color: var(--cream);
+    line-height: 1;
+    text-transform: lowercase;
+  }
+
+  .subtitle {
+    margin-top: 8px;
+    font-size: 0.78rem;
+    font-family: 'DM Mono', monospace;
+    font-weight: 300;
+    letter-spacing: 0.22em;
+    color: var(--ash);
+    text-transform: uppercase;
+  }
+
+  .hairline {
+    width: 60px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    margin: 24px auto 0;
+    opacity: 0.5;
+  }
+
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--earth);
+    border: 1px solid rgba(184,154,114,0.12);
+    border-radius: 3px;
+    padding: 14px 18px;
+    margin-bottom: 28px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    color: var(--ash);
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ash);
+    flex-shrink: 0;
+    transition: background 0.4s;
+  }
+
+  .status-dot.active { background: var(--gold); box-shadow: 0 0 6px var(--gold); }
+  .status-dot.scanning { background: #c9844c; box-shadow: 0 0 6px #c9844c; animation: pulse 1.2s infinite; }
+  .status-dot.error { background: #c94c4c; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  #status-text { flex: 1; }
+
+  .last-scan {
+    color: rgba(140,123,104,0.55);
+    font-size: 0.65rem;
+  }
+
+  .scan-btn {
+    width: 100%;
+    padding: 18px;
+    background: transparent;
+    border: 1px solid rgba(201,168,76,0.35);
+    border-radius: 3px;
+    color: var(--gold);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.25s, border-color 0.25s, box-shadow 0.25s;
+    margin-bottom: 36px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .scan-btn:hover:not(:disabled) {
+    background: var(--glow);
+    border-color: rgba(201,168,76,0.6);
+    box-shadow: 0 0 24px rgba(201,168,76,0.08);
+  }
+
+  .scan-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .scan-btn .ripple {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(201,168,76,0.08), transparent);
+    transform: translateX(-100%);
+    animation: shimmer 1.6s infinite;
+  }
+
+  @keyframes shimmer {
+    100% { transform: translateX(100%); }
+  }
+
+  .section-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.62rem;
+    letter-spacing: 0.3em;
+    color: var(--ash);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+    opacity: 0.7;
+  }
+
+  .pet-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 40px;
+  }
+
+  .pet-card {
+    background: var(--earth);
+    border: 1px solid rgba(184,154,114,0.1);
+    border-radius: 3px;
+    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: 28px 1fr auto;
+    gap: 12px;
+    align-items: start;
+    transition: border-color 0.2s, background 0.2s;
+    animation: fadeSlide 0.3s ease both;
+  }
+
+  @keyframes fadeSlide {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .pet-card:hover {
+    background: var(--bark);
+    border-color: rgba(184,154,114,0.22);
+  }
+
+  .pet-rank {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--ash);
+    padding-top: 2px;
+    opacity: 0.6;
+  }
+
+  .pet-name {
+    font-size: 1rem;
+    font-weight: 400;
+    color: var(--cream);
+    line-height: 1.2;
+  }
+
+  .pet-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 5px;
+    align-items: center;
+  }
+
+  .pet-gen {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    color: #7ab87a;
+    letter-spacing: 0.05em;
+  }
+
+  .mut-tag {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.6rem;
+    padding: 2px 7px;
+    border-radius: 2px;
+    border: 1px solid currentColor;
+    opacity: 0.75;
+    letter-spacing: 0.08em;
+  }
+
+  .trait-tag {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.58rem;
+    color: var(--ash);
+    opacity: 0.65;
+  }
+
+  .pet-price {
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .price-val {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--gold);
+    letter-spacing: 0.05em;
+  }
+
+  .price-val.not-found {
+    color: var(--ash);
+    font-size: 0.65rem;
+    opacity: 0.5;
+  }
+
+  .price-link {
+    display: block;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.58rem;
+    color: var(--feather);
+    text-decoration: none;
+    margin-top: 3px;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+  }
+
+  .price-link:hover { opacity: 1; }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--ash);
+    font-size: 0.9rem;
+    font-style: italic;
+    opacity: 0.5;
+  }
+
+  .log-block {
+    background: var(--earth);
+    border: 1px solid rgba(184,154,114,0.08);
+    border-radius: 3px;
+    padding: 16px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--ash);
+    line-height: 1.8;
+    letter-spacing: 0.04em;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+
+  .log-block::-webkit-scrollbar { width: 3px; }
+  .log-block::-webkit-scrollbar-track { background: transparent; }
+  .log-block::-webkit-scrollbar-thumb { background: var(--grain); border-radius: 2px; }
+
+  .log-line { opacity: 0.6; }
+  .log-line.new { opacity: 1; color: var(--feather); }
+  .log-line.ok  { color: #7ab87a; opacity: 0.8; }
+  .log-line.err { color: #c97a7a; opacity: 0.8; }
+
+  .manual-section {
+    margin-top: 40px;
+  }
+
+  .manual-input {
+    width: 100%;
+    background: var(--earth);
+    border: 1px solid rgba(184,154,114,0.12);
+    border-radius: 3px;
+    padding: 12px 14px;
+    color: var(--parch);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    outline: none;
+    transition: border-color 0.2s;
+    margin-bottom: 10px;
+  }
+
+  .manual-input:focus {
+    border-color: rgba(201,168,76,0.35);
+  }
+
+  .manual-input::placeholder {
+    color: var(--ash);
+    opacity: 0.4;
+  }
+
+  .manual-btn {
+    width: 100%;
+    padding: 13px;
+    background: transparent;
+    border: 1px solid rgba(184,154,114,0.2);
+    border-radius: 3px;
+    color: var(--feather);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+  }
+
+  .manual-btn:hover {
+    background: rgba(184,154,114,0.05);
+    border-color: rgba(184,154,114,0.4);
+  }
+
+  footer {
+    text-align: center;
+    margin-top: 64px;
+    font-size: 0.65rem;
+    font-family: 'DM Mono', monospace;
+    color: var(--ash);
+    opacity: 0.3;
+    letter-spacing: 0.15em;
+  }
+
+  @media (max-width: 420px) {
+    .wrap { padding: 32px 14px 60px; }
+    .pet-card { grid-template-columns: 22px 1fr auto; gap: 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="grain-overlay"></div>
+<div class="wrap">
+
+  <header>
+    <div class="wings">
+      <svg class="wing-svg" viewBox="0 0 80 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2 42 C10 30, 20 10, 50 8 C35 18, 28 28, 30 42 Z" fill="#b89a72" opacity="0.5"/>
+        <path d="M5 44 C18 28, 32 12, 65 5 C48 20, 38 32, 38 44 Z" fill="#b89a72" opacity="0.35"/>
+        <path d="M10 46 C28 26, 48 14, 78 8 C60 24, 50 36, 48 46 Z" fill="#b89a72" opacity="0.2"/>
+        <path d="M2 42 C10 30, 20 10, 50 8" stroke="#c9a84c" stroke-width="0.5" opacity="0.4" fill="none"/>
+      </svg>
+      <svg class="wing-svg right" viewBox="0 0 80 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2 42 C10 30, 20 10, 50 8 C35 18, 28 28, 30 42 Z" fill="#b89a72" opacity="0.5"/>
+        <path d="M5 44 C18 28, 32 12, 65 5 C48 20, 38 32, 38 44 Z" fill="#b89a72" opacity="0.35"/>
+        <path d="M10 46 C28 26, 48 14, 78 8 C60 24, 50 36, 48 46 Z" fill="#b89a72" opacity="0.2"/>
+        <path d="M2 42 C10 30, 20 10, 50 8" stroke="#c9a84c" stroke-width="0.5" opacity="0.4" fill="none"/>
+      </svg>
+    </div>
+    <h1 class="title">brainrot</h1>
+    <p class="subtitle">eldorado price scanner</p>
+    <div class="hairline"></div>
+  </header>
+
+  <div class="status-bar">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text">waiting for scan</span>
+    <span class="last-scan" id="last-scan"></span>
+  </div>
+
+  <button class="scan-btn" id="scan-btn" onclick="triggerScan()">
+    <span id="scan-btn-text">scan server</span>
+  </button>
+
+  <div class="section-label" id="results-label" style="display:none">last scan results</div>
+  <div class="pet-list" id="pet-list">
+    <div class="empty-state">no scan yet — trigger one from the executor or press scan server</div>
+  </div>
+
+  <div class="manual-section">
+    <div class="section-label">look up a single item</div>
+    <input class="manual-input" id="manual-input" type="text" placeholder="item name e.g. Radioactive Skibidi">
+    <button class="manual-btn" onclick="manualLookup()">look up on eldorado</button>
+    <div id="manual-result" style="margin-top:12px;font-family:'DM Mono',monospace;font-size:0.7rem;color:var(--feather);min-height:20px;letter-spacing:0.06em;"></div>
+  </div>
+
+  <div style="margin-top:40px">
+    <div class="section-label">activity log</div>
+    <div class="log-block" id="log-block">
+      <div class="log-line">— dashboard ready</div>
+    </div>
+  </div>
+
+  <footer>fallen angel scanner &nbsp;·&nbsp; steal a brainrot</footer>
+</div>
+
+<script>
+  const MUT_COLORS = {
+    Gold: '#ffd700', Diamond: '#00e5ff', Cursed: '#cc2222',
+    YinYang: '#e0e0e0', Candy: '#ff69b4', Divine: '#ffffff',
+    Rainbow: '#9400d3', Radioactive: '#84ff00', Galaxy: '#aa55ff',
+  };
+
+  let scanData = [];
+  let scanning = false;
+
+  function log(msg, type = '') {
+    const block = document.getElementById('log-block');
+    const line = document.createElement('div');
+    line.className = 'log-line ' + type;
+    const t = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    line.textContent = `[${t}] ${msg}`;
+    block.appendChild(line);
+    block.scrollTop = block.scrollHeight;
+    setTimeout(() => line.classList.remove('new'), 2000);
+  }
+
+  function setStatus(text, state = '') {
+    const dot = document.getElementById('status-dot');
+    const st = document.getElementById('status-text');
+    dot.className = 'status-dot ' + state;
+    st.textContent = text;
+  }
+
+  function renderPets(pets, prices = {}) {
+    const list = document.getElementById('pet-list');
+    const label = document.getElementById('results-label');
+    list.innerHTML = '';
+
+    if (!pets || pets.length === 0) {
+      list.innerHTML = '<div class="empty-state">no pets found in this scan</div>';
+      label.style.display = 'none';
+      return;
+    }
+
+    label.style.display = 'block';
+    const limit = Math.min(25, pets.length);
+
+    for (let i = 0; i < limit; i++) {
+      const p = pets[i];
+      const priceData = prices[p.name] || null;
+      const card = document.createElement('div');
+      card.className = 'pet-card';
+      card.style.animationDelay = (i * 0.03) + 's';
+
+      const mutColor = MUT_COLORS[p.mutation] || '#b89a72';
+      const mutTag = p.mutation && p.mutation !== 'None'
+        ? `<span class="mut-tag" style="color:${mutColor};border-color:${mutColor}">${p.mutation}</span>` : '';
+      const traitTag = p.traits
+        ? `<span class="trait-tag">${p.traits}</span>` : '';
+
+      let priceHtml = '';
+      if (priceData === null) {
+        priceHtml = `<div class="price-val" style="color:var(--ash);font-size:0.6rem;opacity:0.4">pending</div>`;
+      } else if (priceData.price === 'Not found') {
+        priceHtml = `<div class="price-val not-found">—</div>`;
+      } else {
+        priceHtml = `<div class="price-val">${priceData.price}</div>`;
+        if (priceData.url) {
+          priceHtml += `<a class="price-link" href="${priceData.url}" target="_blank" rel="noopener">eldorado ↗</a>`;
+        }
+      }
+
+      card.innerHTML = `
+        <div class="pet-rank">${i + 1}</div>
+        <div>
+          <div class="pet-name">${p.name}</div>
+          <div class="pet-meta">
+            <span class="pet-gen">${p.genText}</span>
+            ${mutTag}${traitTag}
+          </div>
+        </div>
+        <div class="pet-price">${priceHtml}</div>
+      `;
+      list.appendChild(card);
+    }
+  }
+
+  async function pollResults() {
+    try {
+      const res = await fetch('/results');
+      const data = await res.json();
+      if (data.pets && data.pets.length > 0) {
+        renderPets(data.pets, data.prices || {});
+        const ts = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString() : '';
+        document.getElementById('last-scan').textContent = ts ? `last: ${ts}` : '';
+        if (data.status === 'done') {
+          setStatus(`found ${data.pets.length} pets`, 'active');
+          log(`price lookup complete — ${Object.keys(data.prices || {}).length} results`, 'ok');
+        } else if (data.status === 'processing') {
+          setStatus('looking up prices on eldorado...', 'scanning');
+        }
+      }
+    } catch (e) {}
+  }
+
+  async function triggerScan() {
+    if (scanning) return;
+    scanning = true;
+    const btn = document.getElementById('scan-btn');
+    const btnText = document.getElementById('scan-btn-text');
+    btn.disabled = true;
+    btnText.textContent = 'waiting for executor...';
+    setStatus('scan triggered — run script in delta', 'scanning');
+    log('manual scan trigger sent — execute script in delta', 'new');
+
+    try {
+      await fetch('/trigger', { method: 'POST' });
+    } catch (e) {}
+
+    setTimeout(() => {
+      scanning = false;
+      btn.disabled = false;
+      btnText.textContent = 'scan server';
+      if (document.getElementById('status-dot').className.includes('scanning')) {
+        setStatus('waiting for scan', '');
+      }
+    }, 30000);
+  }
+
+  async function manualLookup() {
+    const input = document.getElementById('manual-input');
+    const result = document.getElementById('manual-result');
+    const name = input.value.trim();
+    if (!name) return;
+
+    result.textContent = 'searching eldorado...';
+    log(`manual lookup: ${name}`);
+
+    try {
+      const res = await fetch('/lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (data.price && data.price !== 'Not found') {
+        result.innerHTML = `<span style="color:var(--gold)">${data.price}</span> &nbsp;·&nbsp; <a href="${data.url}" target="_blank" style="color:var(--feather);text-decoration:none">view on eldorado ↗</a>`;
+        log(`${name} — cheapest: ${data.price}`, 'ok');
+      } else {
+        result.textContent = 'not listed on eldorado';
+        log(`${name} — not found`, 'err');
+      }
+    } catch (e) {
+      result.textContent = 'lookup failed';
+      log('lookup request failed', 'err');
+    }
+  }
+
+  document.getElementById('manual-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') manualLookup();
+  });
+
+  setInterval(pollResults, 3000);
+  pollResults();
+</script>
+</body>
+</html>
