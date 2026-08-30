@@ -4,7 +4,7 @@ import json
 import time
 import threading
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from bs4 import BeautifulSoup
 from urllib.parse import quote
 
@@ -25,8 +25,19 @@ SESSION.headers.update({
 
 ELDORADO_SEARCH_URL = "https://www.eldorado.gg/steal-a-brainrot/items"
 
+state = {
+    "pets": [],
+    "prices": {},
+    "status": "idle",
+    "timestamp": None,
+    "trigger_pending": False,
+}
+state_lock = threading.Lock()
+
+
 def normalize(name: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", name.lower()).strip()
+
 
 def similarity_score(query: str, title: str) -> float:
     q_words = set(normalize(query).split())
@@ -35,21 +46,21 @@ def similarity_score(query: str, title: str) -> float:
         return 0.0
     return len(q_words & t_words) / len(q_words)
 
-def search_eldorado(pet_name: str) -> dict | None:
-    query = normalize(pet_name)
-    search_url = f"{ELDORADO_SEARCH_URL}?search={quote(pet_name)}"
 
+def search_eldorado(pet_name: str) -> dict | None:
+    search_url = f"{ELDORADO_SEARCH_URL}?search={quote(pet_name)}"
     try:
         resp = SESSION.get(search_url, timeout=12)
         if resp.status_code != 200:
             return None
 
         soup = BeautifulSoup(resp.text, "html.parser")
-
         listings = []
 
-        cards = soup.select("[data-testid='offer-card'], .offer-card, article[class*='offer'], div[class*='OfferCard'], div[class*='offer-item']")
-
+        cards = soup.select(
+            "[data-testid='offer-card'], .offer-card, article[class*='offer'], "
+            "div[class*='OfferCard'], div[class*='offer-item']"
+        )
         if not cards:
             cards = soup.find_all("div", class_=re.compile(r"offer|listing|card|item", re.I))
 
@@ -96,28 +107,26 @@ def search_eldorado(pet_name: str) -> dict | None:
         print(f"[ELDORADO] Error searching '{pet_name}': {e}")
         return None
 
+
 def post_to_discord(content: str):
     if not DISCORD_WEBHOOK:
-        print("[DISCORD] No webhook configured.")
         return
-
     payload = {
         "content": content,
-        "username": "Brainrot Price Checker",
+        "username": "Brainrot Angel",
         "avatar_url": "https://i.imgur.com/example.png",
     }
-
     try:
         r = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
-        if r.status_code in (200, 204):
-            print(f"[DISCORD] Posted successfully.")
-        else:
-            print(f"[DISCORD] Failed: {r.status_code} {r.text}")
+        print(f"[DISCORD] Status: {r.status_code}")
     except Exception as e:
         print(f"[DISCORD] Exception: {e}")
 
+
 def process_pets_background(pet_list: list):
-    results = []
+    with state_lock:
+        state["status"] = "processing"
+        state["prices"] = {}
 
     unique_names = []
     seen = set()
@@ -128,37 +137,35 @@ def process_pets_background(pet_list: list):
             unique_names.append((name, pet))
 
     top = unique_names[:10]
+    results = []
 
     for name, pet_data in top:
-        print(f"[SEARCH] Looking up: {name}")
+        print(f"[SEARCH] {name}")
         result = search_eldorado(name)
-
         gen_text = pet_data.get("genText", "?")
         mutation = pet_data.get("mutation", "None")
         traits = pet_data.get("traits", "")
 
-        if result:
-            results.append({
-                "name": name,
-                "gen": gen_text,
-                "mutation": mutation,
-                "traits": traits,
-                "price": result["price_text"],
-                "listing_title": result["title"],
-                "url": result["url"],
-            })
-        else:
-            results.append({
-                "name": name,
-                "gen": gen_text,
-                "mutation": mutation,
-                "traits": traits,
-                "price": "Not found",
-                "listing_title": None,
-                "url": None,
-            })
+        price_entry = {
+            "price": result["price_text"] if result else "Not found",
+            "url": result["url"] if result else None,
+        }
+
+        with state_lock:
+            state["prices"][name] = price_entry
+
+        results.append({
+            "name": name,
+            "gen": gen_text,
+            "mutation": mutation,
+            "traits": traits,
+            **price_entry,
+        })
 
         time.sleep(1.2)
+
+    with state_lock:
+        state["status"] = "done"
 
     if not results:
         post_to_discord("**Brainrot Price Check:** No results found on Eldorado.")
@@ -168,23 +175,39 @@ def process_pets_background(pet_list: list):
     for i, r in enumerate(results, 1):
         mut_str = f" [{r['mutation']}]" if r["mutation"] != "None" else ""
         trait_str = f" {{{r['traits']}}}" if r["traits"] else ""
-        price_str = r["price"]
         if r["url"]:
             lines.append(f"#{i:<2} {r['name']}{mut_str}{trait_str}")
-            lines.append(f"    Gen: {r['gen']}  |  Cheapest: {price_str}")
+            lines.append(f"    Gen: {r['gen']}  |  Cheapest: {r['price']}")
             lines.append(f"    {r['url']}")
         else:
             lines.append(f"#{i:<2} {r['name']}{mut_str}{trait_str}")
             lines.append(f"    Gen: {r['gen']}  |  Not listed on Eldorado")
         lines.append("")
-
     lines.append("```")
     post_to_discord("\n".join(lines))
 
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"status": "Brainrot Eldorado Middleware running"}), 200
+    return render_template("dashboard.html")
+
+
+@app.route("/results", methods=["GET"])
+def results():
+    with state_lock:
+        return jsonify({
+            "pets": state["pets"],
+            "prices": state["prices"],
+            "status": state["status"],
+            "timestamp": state["timestamp"],
+        })
+
+
+@app.route("/trigger", methods=["POST"])
+def trigger():
+    with state_lock:
+        state["trigger_pending"] = True
+    return jsonify({"status": "trigger set"}), 200
 
 
 @app.route("/scan", methods=["POST"])
@@ -201,11 +224,43 @@ def scan():
     if not isinstance(pet_list, list) or len(pet_list) == 0:
         return jsonify({"error": "Empty or invalid pet list"}), 400
 
-    print(f"[SCAN] Received {len(pet_list)} pets. Processing in background...")
+    with state_lock:
+        state["pets"] = pet_list
+        state["timestamp"] = time.time()
+        state["status"] = "processing"
+        state["prices"] = {}
+        state["trigger_pending"] = False
+
+    post_to_discord(
+        "**Top 25 Brainrot Pets (Server Scan):**\n```\n" +
+        "\n".join(
+            f"#{i+1:<2} {p.get('name','?')} ({p.get('genText','?')}) [{p.get('mutation','None')}] {{{p.get('traits','')}}}"
+            for i, p in enumerate(pet_list[:25])
+        ) + "\n```"
+    )
+
     thread = threading.Thread(target=process_pets_background, args=(pet_list,), daemon=True)
     thread.start()
 
+    print(f"[SCAN] Received {len(pet_list)} pets. Processing...")
     return jsonify({"status": "processing", "count": len(pet_list)}), 202
+
+
+@app.route("/lookup", methods=["POST"])
+def lookup():
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+    name = (data or {}).get("name", "").strip()
+    if not name:
+        return jsonify({"error": "Missing name"}), 400
+
+    result = search_eldorado(name)
+    if result:
+        return jsonify({"price": result["price_text"], "url": result["url"]})
+    return jsonify({"price": "Not found", "url": None})
 
 
 if __name__ == "__main__":
