@@ -19,6 +19,48 @@ PORT = int(os.environ.get("PORT", 5000))
 SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "77d634d4d1b8cdc9368131a85957809b")
 ELDORADO_SEARCH_URL = "https://www.eldorado.gg/steal-a-brainrot/items"
 
+PRICE_DB_FILE = "price_db.json"
+price_db_lock = threading.Lock()
+
+
+def load_price_db():
+    if not os.path.exists(PRICE_DB_FILE):
+        return {}
+    try:
+        with open(PRICE_DB_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_price_db(db):
+    with open(PRICE_DB_FILE, "w") as f:
+        json.dump(db, f, indent=2)
+
+
+def normalize_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9 ]", "", name.lower()).strip()
+
+
+def get_cached_price(name: str):
+    with price_db_lock:
+        db = load_price_db()
+    key = normalize_name(name)
+    if key not in db:
+        for k in db:
+            if k in key or key in k:
+                entry = db[k]
+                age = time.time() - entry.get("timestamp", 0)
+                if age < 86400 * 3:
+                    return entry
+        return None
+    entry = db[key]
+    age = time.time() - entry.get("timestamp", 0)
+    if age > 86400 * 3:
+        return None
+    return entry
+
+
 def scraper_get(url: str, timeout: int = 30):
     params = {
         "api_key": SCRAPER_API_KEY,
@@ -55,7 +97,13 @@ def make_eldorado_slug(name: str) -> str:
     slug = re.sub(r"\s+", "-", slug)
     return f"{slug}-steal-a-brainrot"
 
+
 def search_eldorado(pet_name: str) -> dict | None:
+    cached = get_cached_price(pet_name)
+    if cached:
+        print(f"[CACHE] Hit for '{pet_name}': {cached['price_text']}")
+        return cached
+
     slug = make_eldorado_slug(pet_name)
     item_url = f"https://www.eldorado.gg/{slug}/i/259"
     search_url = f"{ELDORADO_SEARCH_URL}?search={quote(pet_name)}"
@@ -70,9 +118,6 @@ def search_eldorado(pet_name: str) -> dict | None:
 
             soup = BeautifulSoup(resp.text, "html.parser")
             listings = []
-
-            all_prices = re.findall(r'\$\s*([\d,\.]+)', resp.text)
-            all_links = soup.find_all("a", href=re.compile(r"/o/\d+|/offer/\d+"))
 
             price_els = soup.find_all(string=re.compile(r'\$[\d,\.]+'))
             for el in price_els:
@@ -273,6 +318,78 @@ def lookup():
     if result:
         return jsonify({"price": result["price_text"], "url": result["url"]})
     return jsonify({"price": "Not found", "url": None})
+
+
+@app.route("/submit-price", methods=["POST"])
+def submit_price():
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+    entries = (data or {}).get("prices", [])
+    if not entries:
+        single_name = (data or {}).get("name", "").strip()
+        single_price = (data or {}).get("price")
+        single_url = (data or {}).get("url", "")
+        if single_name and single_price:
+            entries = [{"name": single_name, "price": single_price, "price_text": f"${float(single_price):.2f}", "url": single_url}]
+
+    if not entries:
+        return jsonify({"error": "No price entries"}), 400
+
+    saved = 0
+    with price_db_lock:
+        db = load_price_db()
+        for entry in entries:
+            name = entry.get("name", "").strip()
+            price = entry.get("price")
+            if not name or price is None:
+                continue
+            try:
+                price_val = float(price)
+            except (ValueError, TypeError):
+                continue
+            if price_val < 0.01 or price_val > 100000:
+                continue
+
+            key = normalize_name(name)
+            existing = db.get(key)
+            if existing:
+                existing_price = existing.get("price", float("inf"))
+                if price_val < existing_price:
+                    db[key] = {
+                        "price": price_val,
+                        "price_text": entry.get("price_text", f"${price_val:.2f}"),
+                        "url": entry.get("url", ""),
+                        "timestamp": time.time(),
+                        "source": "userscript",
+                    }
+                    saved += 1
+            else:
+                db[key] = {
+                    "price": price_val,
+                    "price_text": entry.get("price_text", f"${price_val:.2f}"),
+                    "url": entry.get("url", ""),
+                    "timestamp": time.time(),
+                    "source": "userscript",
+                }
+                saved += 1
+
+        save_price_db(db)
+
+    print(f"[SUBMIT] Saved {saved}/{len(entries)} prices from userscript")
+    return jsonify({"saved": saved, "total": len(entries)}), 200
+
+
+@app.route("/prices", methods=["GET"])
+def list_prices():
+    with price_db_lock:
+        db = load_price_db()
+    return jsonify({
+        "count": len(db),
+        "prices": {k: v for k, v in sorted(db.items(), key=lambda x: x[1].get("price", 0))}
+    })
 
 
 if __name__ == "__main__":
