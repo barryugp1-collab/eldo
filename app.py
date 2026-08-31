@@ -4,26 +4,29 @@ import json
 import time
 import threading
 import requests
+import urllib3
 from flask import Flask, request, jsonify, render_template
 from bs4 import BeautifulSoup
 from urllib.parse import quote
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "")
 PORT = int(os.environ.get("PORT", 5000))
 
-SESSION = requests.Session()
-SESSION.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-})
-
+SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "77d634d4d1b8cdc9368131a85957809b")
 ELDORADO_SEARCH_URL = "https://www.eldorado.gg/steal-a-brainrot/items"
+
+def scraper_get(url: str, timeout: int = 30):
+    params = {
+        "api_key": SCRAPER_API_KEY,
+        "url": url,
+        "render": "true",
+        "country_code": "us",
+    }
+    return requests.get("https://api.scraperapi.com/", params=params, timeout=timeout)
 
 state = {
     "pets": [],
@@ -47,65 +50,74 @@ def similarity_score(query: str, title: str) -> float:
     return len(q_words & t_words) / len(q_words)
 
 
+def make_eldorado_slug(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9 ]", "", name.lower()).strip()
+    slug = re.sub(r"\s+", "-", slug)
+    return f"{slug}-steal-a-brainrot"
+
 def search_eldorado(pet_name: str) -> dict | None:
+    slug = make_eldorado_slug(pet_name)
+    item_url = f"https://www.eldorado.gg/{slug}/i/259"
     search_url = f"{ELDORADO_SEARCH_URL}?search={quote(pet_name)}"
-    try:
-        resp = SESSION.get(search_url, timeout=12)
-        if resp.status_code != 200:
-            return None
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        listings = []
-
-        cards = soup.select(
-            "[data-testid='offer-card'], .offer-card, article[class*='offer'], "
-            "div[class*='OfferCard'], div[class*='offer-item']"
-        )
-        if not cards:
-            cards = soup.find_all("div", class_=re.compile(r"offer|listing|card|item", re.I))
-
-        for card in cards:
-            title_el = card.find(["h2", "h3", "h4", "span", "p"], class_=re.compile(r"title|name|offer", re.I))
-            price_el = card.find(["span", "div", "p"], class_=re.compile(r"price|cost|amount", re.I))
-            link_el = card.find("a", href=True)
-
-            if not title_el or not price_el:
+    for url in [item_url, search_url]:
+        try:
+            print(f"[ELDORADO] Trying: {url}")
+            resp = scraper_get(url, timeout=30)
+            print(f"[ELDORADO] Status: {resp.status_code} len={len(resp.text)}")
+            if resp.status_code != 200:
                 continue
 
-            title_text = title_el.get_text(strip=True)
-            price_text = price_el.get_text(strip=True)
-            href = link_el["href"] if link_el else ""
+            soup = BeautifulSoup(resp.text, "html.parser")
+            listings = []
 
-            price_match = re.search(r"[\$€£]?\s*([\d,\.]+)", price_text)
-            if not price_match:
-                continue
+            all_prices = re.findall(r'\$\s*([\d,\.]+)', resp.text)
+            all_links = soup.find_all("a", href=re.compile(r"/o/\d+|/offer/\d+"))
 
-            try:
-                price_val = float(price_match.group(1).replace(",", ""))
-            except ValueError:
-                continue
+            price_els = soup.find_all(string=re.compile(r'\$[\d,\.]+'))
+            for el in price_els:
+                price_match = re.search(r'\$([\d,\.]+)', el)
+                if not price_match:
+                    continue
+                try:
+                    price_val = float(price_match.group(1).replace(",", ""))
+                except ValueError:
+                    continue
+                if price_val < 0.01 or price_val > 10000:
+                    continue
 
-            score = similarity_score(pet_name, title_text)
-            if score < 0.4:
-                continue
+                parent = el.parent
+                link = None
+                for _ in range(6):
+                    if parent is None:
+                        break
+                    a = parent.find("a", href=True)
+                    if a:
+                        link = a["href"]
+                        break
+                    parent = parent.parent
 
-            listings.append({
-                "title": title_text,
-                "price": price_val,
-                "price_text": price_text,
-                "url": f"https://www.eldorado.gg{href}" if href.startswith("/") else href,
-                "score": score,
-            })
+                href = link or f"/{slug}/i/259"
+                full_url = f"https://www.eldorado.gg{href}" if href.startswith("/") else href
 
-        if not listings:
-            return None
+                listings.append({
+                    "price": price_val,
+                    "price_text": f"${price_val:.2f}",
+                    "url": full_url,
+                    "score": 1.0,
+                })
 
-        listings.sort(key=lambda x: (x["price"], -x["score"]))
-        return listings[0]
+            if listings:
+                listings.sort(key=lambda x: x["price"])
+                result = listings[0]
+                result["url"] = item_url
+                return result
 
-    except Exception as e:
-        print(f"[ELDORADO] Error searching '{pet_name}': {e}")
-        return None
+        except Exception as e:
+            print(f"[ELDORADO] Error on '{url}': {e}")
+            continue
+
+    return None
 
 
 def post_to_discord(content: str):
