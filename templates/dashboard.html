@@ -160,7 +160,7 @@
     text-transform: uppercase;
     cursor: pointer;
     transition: background 0.25s, border-color 0.25s, box-shadow 0.25s;
-    margin-bottom: 36px;
+    margin-bottom: 28px;
     position: relative;
     overflow: hidden;
   }
@@ -186,6 +186,64 @@
 
   @keyframes shimmer {
     100% { transform: translateX(100%); }
+  }
+
+  .controls-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+
+  .search-input {
+    flex: 1;
+    background: var(--earth);
+    border: 1px solid rgba(184,154,114,0.12);
+    border-radius: 3px;
+    padding: 10px 14px;
+    color: var(--parch);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .search-input:focus {
+    border-color: rgba(201,168,76,0.35);
+  }
+
+  .search-input::placeholder {
+    color: var(--ash);
+    opacity: 0.4;
+  }
+
+  .sort-select {
+    background: var(--earth);
+    border: 1px solid rgba(184,154,114,0.12);
+    border-radius: 3px;
+    padding: 10px 12px;
+    color: var(--ash);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.06em;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238c7b68' opacity='0.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 28px;
+  }
+
+  .sort-select:focus {
+    border-color: rgba(201,168,76,0.35);
+  }
+
+  .sort-select option {
+    background: var(--earth);
+    color: var(--parch);
   }
 
   .section-label {
@@ -275,6 +333,18 @@
     opacity: 0.65;
   }
 
+  .dupe-badge {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.55rem;
+    padding: 2px 6px;
+    border-radius: 2px;
+    background: rgba(201,168,76,0.1);
+    border: 1px solid rgba(201,168,76,0.25);
+    color: var(--gold);
+    opacity: 0.8;
+    letter-spacing: 0.06em;
+  }
+
   .pet-price {
     text-align: right;
     flex-shrink: 0;
@@ -313,6 +383,16 @@
     font-size: 0.9rem;
     font-style: italic;
     opacity: 0.5;
+  }
+
+  .no-results {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--ash);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.68rem;
+    opacity: 0.5;
+    letter-spacing: 0.08em;
   }
 
   .log-block {
@@ -399,6 +479,7 @@
   @media (max-width: 420px) {
     .wrap { padding: 32px 14px 60px; }
     .pet-card { grid-template-columns: 22px 1fr auto; gap: 8px; }
+    .controls-row { flex-direction: column; }
   }
 </style>
 </head>
@@ -437,6 +518,17 @@
   </button>
 
   <div class="section-label" id="results-label" style="display:none">last scan results</div>
+
+  <div class="controls-row" id="controls-row" style="display:none">
+    <input class="search-input" id="search-input" type="text" placeholder="search pets..." oninput="applyFilters()">
+    <select class="sort-select" id="sort-select" onchange="applyFilters()">
+      <option value="rank">rank</option>
+      <option value="value-desc">value ↓</option>
+      <option value="value-asc">value ↑</option>
+      <option value="name">name a–z</option>
+    </select>
+  </div>
+
   <div class="pet-list" id="pet-list">
     <div class="empty-state">no scan yet — trigger one from the executor or press scan server</div>
   </div>
@@ -467,6 +559,8 @@
 
   let scanData = [];
   let scanning = false;
+  let currentPets = [];
+  let currentPrices = {};
 
   function log(msg, type = '') {
     const block = document.getElementById('log-block');
@@ -486,22 +580,62 @@
     st.textContent = text;
   }
 
-  function renderPets(pets, prices = {}) {
+  function dupeKey(pet) {
+    const mut = (pet.mutation || 'None').trim();
+    const traits = (pet.traits || '').trim();
+    return `${pet.name.trim()}||${mut}||${traits}`;
+  }
+
+  function buildDupeMap(pets) {
+    const map = {};
+    for (const p of pets) {
+      const k = dupeKey(p);
+      map[k] = (map[k] || 0) + 1;
+    }
+    return map;
+  }
+
+  function parseGenValue(genText) {
+    if (!genText) return 0;
+    const match = genText.match(/([\d,\.]+)\s*([KMBT]?)/i);
+    if (!match) return 0;
+    const num = parseFloat(match[1].replace(/,/g, ''));
+    const suffix = match[2].toUpperCase();
+    const multipliers = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
+    return num * (multipliers[suffix] || 1);
+  }
+
+  function applyFilters() {
+    const query = document.getElementById('search-input').value.trim().toLowerCase();
+    const sort = document.getElementById('sort-select').value;
+
+    let filtered = currentPets.slice(0, 25);
+
+    if (query) {
+      filtered = filtered.filter(p => p.name.toLowerCase().includes(query));
+    }
+
+    if (sort === 'value-desc') {
+      filtered.sort((a, b) => parseGenValue(b.genText) - parseGenValue(a.genText));
+    } else if (sort === 'value-asc') {
+      filtered.sort((a, b) => parseGenValue(a.genText) - parseGenValue(b.genText));
+    } else if (sort === 'name') {
+      filtered.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    renderPetCards(filtered, currentPrices, buildDupeMap(currentPets));
+  }
+
+  function renderPetCards(pets, prices, dupeMap) {
     const list = document.getElementById('pet-list');
-    const label = document.getElementById('results-label');
     list.innerHTML = '';
 
     if (!pets || pets.length === 0) {
-      list.innerHTML = '<div class="empty-state">no pets found in this scan</div>';
-      label.style.display = 'none';
+      list.innerHTML = '<div class="no-results">no pets match your search</div>';
       return;
     }
 
-    label.style.display = 'block';
-    const limit = Math.min(25, pets.length);
-
-    for (let i = 0; i < limit; i++) {
-      const p = pets[i];
+    pets.forEach((p, i) => {
       const priceData = prices[p.name] || null;
       const card = document.createElement('div');
       card.className = 'pet-card';
@@ -512,6 +646,10 @@
         ? `<span class="mut-tag" style="color:${mutColor};border-color:${mutColor}">${p.mutation}</span>` : '';
       const traitTag = p.traits
         ? `<span class="trait-tag">${p.traits}</span>` : '';
+
+      const count = dupeMap[dupeKey(p)] || 1;
+      const dupeTag = count > 1
+        ? `<span class="dupe-badge">×${count}</span>` : '';
 
       let priceHtml = '';
       if (priceData === null) {
@@ -531,13 +669,35 @@
           <div class="pet-name">${p.name}</div>
           <div class="pet-meta">
             <span class="pet-gen">${p.genText}</span>
-            ${mutTag}${traitTag}
+            ${mutTag}${traitTag}${dupeTag}
           </div>
         </div>
         <div class="pet-price">${priceHtml}</div>
       `;
       list.appendChild(card);
+    });
+  }
+
+  function renderPets(pets, prices = {}) {
+    const list = document.getElementById('pet-list');
+    const label = document.getElementById('results-label');
+    const controls = document.getElementById('controls-row');
+
+    if (!pets || pets.length === 0) {
+      list.innerHTML = '<div class="empty-state">no pets found in this scan</div>';
+      label.style.display = 'none';
+      controls.style.display = 'none';
+      currentPets = [];
+      currentPrices = {};
+      return;
     }
+
+    currentPets = pets;
+    currentPrices = prices;
+    label.style.display = 'block';
+    controls.style.display = 'flex';
+
+    applyFilters();
   }
 
   async function pollResults() {
