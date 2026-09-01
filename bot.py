@@ -122,18 +122,7 @@ async def run_odyfind_for_pets(channel: discord.TextChannel, pets: list):
             pending[name] = asyncio.get_event_loop().create_future()
 
             try:
-                slash_cmd = None
-                async for cmd in channel.guild.fetch_application_commands():
-                    if cmd.name == "odyfind":
-                        slash_cmd = cmd
-                        break
-
-                if slash_cmd is None:
-                    print(f"[ODYFIND] /odyfind command not found in guild")
-                    await channel.send(f"/odyfind brainrot:{name} income:{income} unit:{unit_clean}")
-                else:
-                    await channel.send(f"/odyfind brainrot:{name} income:{income} unit:{unit_clean}")
-
+                await channel.send(f"/odyfind brainrot:{name} income:{income} unit:{unit_clean}")
                 print(f"[ODYFIND] Sent for: {name} ({income} {unit_clean})")
 
             except Exception as e:
