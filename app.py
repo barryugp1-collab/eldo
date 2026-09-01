@@ -244,8 +244,126 @@ def process_pets_background(pet_list: list):
     post_to_discord("\n".join(lines))
 
 
+REFRESH_INTERVAL_HIGH = 3 * 3600
+REFRESH_INTERVAL_LOW  = 12 * 3600
+TOP_N_HIGH_PRIORITY   = 10
+_refresh_thread_started = False
+
+
+def refresh_prices_background():
+    time.sleep(60)
+    while True:
+        try:
+            with price_db_lock:
+                db = load_price_db()
+
+            if not db:
+                time.sleep(1800)
+                continue
+
+            now = time.time()
+            sorted_pets = sorted(db.items(), key=lambda x: x[1].get("price", 0), reverse=True)
+
+            high_priority = [k for k, _ in sorted_pets[:TOP_N_HIGH_PRIORITY]]
+            low_priority  = [k for k, _ in sorted_pets[TOP_N_HIGH_PRIORITY:]]
+
+            due = []
+            for key in high_priority:
+                entry = db[key]
+                age = now - entry.get("timestamp", 0)
+                if age >= REFRESH_INTERVAL_HIGH:
+                    due.append(key)
+
+            for key in low_priority:
+                entry = db[key]
+                age = now - entry.get("timestamp", 0)
+                if age >= REFRESH_INTERVAL_LOW:
+                    due.append(key)
+
+            print(f"[REFRESHER] {len(due)} pets due for refresh")
+
+            for key in due:
+                with price_db_lock:
+                    db = load_price_db()
+                entry = db.get(key)
+                if not entry:
+                    continue
+
+                original_name = entry.get("name", key)
+                slug = make_eldorado_slug(original_name or key)
+                item_url  = f"https://www.eldorado.gg/{slug}/i/259"
+                search_url = f"{ELDORADO_SEARCH_URL}?search={quote(original_name or key)}"
+
+                found = None
+                for url in [item_url, search_url]:
+                    try:
+                        print(f"[REFRESHER] Fetching: {url}")
+                        resp = scraper_get(url, timeout=30)
+                        if resp.status_code != 200:
+                            continue
+                        soup = BeautifulSoup(resp.text, "html.parser")
+                        listings = []
+                        price_els = soup.find_all(string=re.compile(r'\$[\d,\.]+'))
+                        for el in price_els:
+                            pm = re.search(r'\$([\d,\.]+)', el)
+                            if not pm:
+                                continue
+                            try:
+                                pv = float(pm.group(1).replace(",", ""))
+                            except ValueError:
+                                continue
+                            if pv < 0.01 or pv > 100000:
+                                continue
+                            listings.append(pv)
+                        if listings:
+                            cheapest = min(listings)
+                            found = {
+                                "price": cheapest,
+                                "price_text": f"${cheapest:.2f}",
+                                "url": item_url,
+                                "timestamp": time.time(),
+                                "source": "refresher",
+                                "name": original_name or key,
+                            }
+                            break
+                    except Exception as e:
+                        print(f"[REFRESHER] Error: {e}")
+                        continue
+
+                if found:
+                    with price_db_lock:
+                        db = load_price_db()
+                        db[key] = found
+                        save_price_db(db)
+                    print(f"[REFRESHER] Updated '{key}' → {found['price_text']}")
+                else:
+                    with price_db_lock:
+                        db = load_price_db()
+                        if key in db:
+                            db[key]["timestamp"] = time.time()
+                            save_price_db(db)
+                    print(f"[REFRESHER] No price found for '{key}', timestamp bumped")
+
+                time.sleep(3)
+
+        except Exception as e:
+            print(f"[REFRESHER] Uncaught error: {e}")
+
+        time.sleep(1800)
+
+
+def start_refresh_thread():
+    global _refresh_thread_started
+    if not _refresh_thread_started:
+        _refresh_thread_started = True
+        t = threading.Thread(target=refresh_prices_background, daemon=True)
+        t.start()
+        print("[REFRESHER] Background price refresher started")
+
+
 @app.route("/", methods=["GET"])
 def index():
+    start_refresh_thread()
     return render_template("dashboard.html")
 
 
@@ -364,6 +482,7 @@ def submit_price():
                         "url": entry.get("url", ""),
                         "timestamp": time.time(),
                         "source": "userscript",
+                        "name": name,
                     }
                     saved += 1
             else:
@@ -373,6 +492,7 @@ def submit_price():
                     "url": entry.get("url", ""),
                     "timestamp": time.time(),
                     "source": "userscript",
+                    "name": name,
                 }
                 saved += 1
 
