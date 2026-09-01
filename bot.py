@@ -9,7 +9,7 @@ from discord.ext import commands
 
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 RAILWAY_BACKEND   = os.environ.get("RAILWAY_BACKEND", "https://web-production-654e0.up.railway.app")
-GUILD_ID          = 1451657878287945911
+GUILD_ID          = 1427249989066690684
 CHANNEL_NAME      = "bss-trade"
 ODYSSEY_BOT_NAME  = "OdysseyAI"
 
